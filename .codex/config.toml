@@ -1,0 +1,12 @@
+# <repo>/.codex/config.toml
+
+# Never prompt for approvals
+approval_policy = "never"
+
+# Allow writing inside the workspace (repo), but keep the sandbox in place
+sandbox_mode = "workspace-write"
+
+# Optional: if you also want commands spawned by Codex to have network access
+# (this is separate from “web_search”)
+[sandbox_workspace_write]
+network_access = true

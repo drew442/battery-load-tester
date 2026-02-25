@@ -1,0 +1,14 @@
+host: 127.0.0.1
+port: 8000
+db_path: ./battery_load_tester.db
+
+rc3563_port: COM4
+rc3563_baudrate: 115200
+rc3563_serial_timeout_s: 0.2
+demo_mode: false
+sample_period_s: 0.2
+
+load_detect_voltage_drop_v: 0.15
+battery_present_voltage_v: 1.0
+min_test_duration_s: 0.5
+pre_trigger_samples: 6

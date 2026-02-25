@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "battery-load-tester"
+version = "0.1.0"
+description = "Battery load tester service for RC3563 + timed resistive load hardware"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116.0",
+  "uvicorn[standard]>=0.35.0",
+  "pyyaml>=6.0.2",
+  "pyserial>=3.5",
+  "jinja2>=3.1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+  "httpx>=0.28.0",
+  "ruff>=0.13.0",
+]
+
+[project.scripts]
+battery-load-tester = "battery_load_tester.main:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Battery Load Tester</title>
+  <style>
+    :root { --bg:#f2f4f7; --panel:#fff; --ink:#12263a; --ok:#2e7d32; --warn:#ef6c00; --line:#d9e1ea; }
+    body { margin:0; font-family:"Segoe UI",Tahoma,sans-serif; color:var(--ink); background:linear-gradient(180deg,#e6eef8 0%,var(--bg) 35%); }
+    .wrap { max-width:1200px; margin:0 auto; padding:24px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; box-shadow:0 4px 12px rgba(10,40,70,.06); }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:14px 0; }
+    button, select, input { font:inherit; }
+    .pill { display:inline-block; font-size:.8rem; padding:3px 9px; border-radius:99px; color:#fff; }
+    .ok { background:var(--ok); } .warn { background:var(--warn); }
+    .info { background:#1565c0; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); font-size:.88rem; }
+    th { background:#f8fbff; }
+    .note-input { width:170px; max-width:100%; font-size:.84rem; padding:4px 6px; }
+    .split { display:grid; grid-template-columns:1.4fr 1fr; gap:12px; margin-top:14px; }
+    .chart-legend { margin:6px 0 4px; font-size:.8rem; color:#44586b; display:flex; gap:14px; flex-wrap:wrap; }
+    .rank-explain { font-size:.82rem; color:#4b5f72; margin-bottom:8px; }
+    .badge-missing { display:inline-block; background:#ffecb3; color:#7a5200; border-radius:6px; padding:2px 6px; font-size:.75rem; margin-left:6px; }
+    .chip.v{color:#1565c0}.chip.r{color:#2e7d32}
+    .mono { font-family: Consolas, monospace; font-size:.84rem; }
+    .field-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px; }
+    .field-grid label { display:flex; flex-direction:column; gap:4px; font-size:.8rem; color:#44586b; }
+    .status-dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+    .status-red { background:#c62828; }
+    .status-green { background:#2e7d32; }
+    @media (max-width: 980px) { .split { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Battery Load Tester</h1>
+    <div class="grid">
+      <div class="card"><div>RC3563 Link</div><div id="connected">-</div></div>
+      <div class="card"><div>Load State</div><div id="underLoad">-</div></div>
+      <div class="card"><div>Test State</div><div id="testPhase">-</div></div>
+      <div class="card"><div>Rest Countdown</div><div id="restCountdown">-</div></div>
+      <div class="card"><div>Live Voltage</div><div id="voltage">-</div></div>
+      <div class="card"><div>Live Resistance</div><div id="resistance">-</div></div>
+      <div class="card"><div>Packet Rate</div><div id="packetRate">-</div></div>
+      <div class="card"><div>Buffer Depth</div><div id="bufferDepth">-</div></div>
+      <div class="card"><div>Total Tests</div><div id="count">0</div></div>
+    </div>
+
+    <div class="toolbar">
+      <label>Sort by:
+        <select id="sortBy">
+          <option value="id">ID</option>
+          <option value="started_at">Start</option>
+          <option value="duration_s">Duration</option>
+          <option value="min_resistance_ohm">R Min</option>
+          <option value="delta_voltage_v">ΔV</option>
+          <option value="delta_resistance_ohm">ΔR</option>
+          <option value="sample_count">Samples</option>
+        </select>
+      </label>
+      <label>Order:
+        <select id="sortOrder">
+          <option value="desc">Desc</option>
+          <option value="asc">Asc</option>
+        </select>
+      </label>
+      <button onclick="refresh()">Apply Sort</button>
+      <button onclick="startRestTimer()">Start Rest Timer</button>
+      <button onclick="clearResults()">Clear Results</button>
+    </div>
+
+    <h2>Recent Results</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Sel</th><th>ID</th><th>Start</th><th>Dur</th><th>V Start</th><th>V End</th><th>ΔV</th>
+          <th>R Start</th><th>R Min</th><th>R Max</th><th>ΔR</th><th>Samples</th><th>Note</th><th>Graph</th><th>Del</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <div class="split">
+      <div class="card">
+        <h3>Groups</h3>
+        <div class="field-grid">
+          <label>Group Name<input id="groupName" maxlength="80"></label>
+          <label>Chemistry<input id="groupChem" value="NiMH" maxlength="30"></label>
+          <label>Module Nominal Voltage (V)<input id="groupNomV" type="number" step="0.01" value="7.2"></label>
+          <label>Sticker Capacity (Ah)<input id="groupCap" type="number" step="0.1" value="6.5"></label>
+          <label>Sticker Energy (Wh, optional)<input id="groupWh" type="number" step="0.1"></label>
+          <label>Test Temperature (C)<input id="groupTemp" type="number" step="0.1" value="25"></label>
+          <label>Target Load Current (A)<input id="groupLoadA" type="number" step="0.1" value="10"></label>
+          <label>Pulse Duration (s)<input id="groupPulseS" type="number" step="0.1" value="2"></label>
+          <label>Rest Time Before Test (s)<input id="groupRestS" type="number" step="1" value="30"></label>
+        </div>
+        <div class="toolbar">
+          <button onclick="createGroup()">Create Group</button>
+          <button onclick="clearGroups()">Clear Groups</button>
+        </div>
+        <div class="toolbar">
+          <label>Target Group:
+            <select id="groupSelect"></select>
+          </label>
+          <label><input type="checkbox" id="viewGroupOnly" onchange="toggleGroupView()"> View group only</label>
+          <button onclick="addSelectedToGroup()">Add Selected Tests</button>
+          <button onclick="rankGroup()">Rank Group</button>
+        </div>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Chem</th><th>Spec</th><th>Tests</th><th>Action</th></tr></thead>
+          <tbody id="groupRows"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Group Ranking</h3>
+        <div class="rank-explain">
+          Ranking is relative within a group. Lower resistance and lower voltage sag score higher.
+        </div>
+        <div id="rankWarnings" class="mono"></div>
+        <table>
+          <thead><tr><th>Rank</th><th>Test</th><th>Score</th><th>V Drop</th><th>R Min</th><th>Note</th></tr></thead>
+          <tbody id="rankRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const sampleCache = new Map();
+    const expandedGraphs = new Set();
+    const inFlightNotes = new Map();
+    const selectedTests = new Set();
+    const groupMap = new Map();
+    const rowCache = new Map();
+    let restUntilMs = 0;
+    let prevBatteryPresent = false;
+    let lastAutoRestStartMs = 0;
+    const BATTERY_PRESENT_V_THRESHOLD = 1.0;
+    const AUTO_REST_RETRIGGER_GUARD_MS = 5000;
+
+    function fmtResistance(ohm) { return (ohm===null||ohm===undefined) ? '-' : `${(ohm*1000).toFixed(2)} mΩ`; }
+    function fmtDelta(v, u, d=3, s=1) { if (v===null||v===undefined) return '-'; const x = Number(v)*s; return `${x>0?'+':''}${x.toFixed(d)} ${u}`; }
+    function escapeAttr(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+    function updateRestIndicator() {
+      const el = document.getElementById('restCountdown');
+      if (!el) return;
+      const now = Date.now();
+      if (restUntilMs > now) {
+        const sec = Math.ceil((restUntilMs - now) / 1000);
+        const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+        const ss = String(sec % 60).padStart(2, '0');
+        el.innerHTML = `<span class="status-dot status-red"></span>${mm}:${ss}`;
+      } else {
+        el.innerHTML = `<span class="status-dot status-green"></span>00:00`;
+      }
+    }
+
+    function isBatteryPresent(status) {
+      const m = status && status.last_measurement;
+      if (!m) return false;
+      return Math.abs(Number(m.voltage_v || 0)) >= BATTERY_PRESENT_V_THRESHOLD;
+    }
+
+    function maybeAutoStartRestTimer(status) {
+      const batteryPresent = isBatteryPresent(status);
+      const now = Date.now();
+      const risingEdge = batteryPresent && !prevBatteryPresent;
+      const retriggerAllowed = (now - lastAutoRestStartMs) > AUTO_REST_RETRIGGER_GUARD_MS;
+      if (risingEdge && retriggerAllowed) {
+        const groupId = document.getElementById('groupSelect').value;
+        if (groupId) {
+          startRestTimer();
+          lastAutoRestStartMs = now;
+        }
+      }
+      prevBatteryPresent = batteryPresent;
+    }
+
+    function updateTestPhase(status) {
+      const el = document.getElementById('testPhase');
+      if (!el) return;
+      const batteryPresent = isBatteryPresent(status);
+      const now = Date.now();
+      if (!batteryPresent) {
+        el.innerHTML = `<span class="pill warn">WAIT</span> connect battery`;
+        return;
+      }
+      if (status && status.under_load) {
+        el.innerHTML = `<span class="pill info">TESTING</span> collecting`;
+        return;
+      }
+      if (restUntilMs > now) {
+        el.innerHTML = `<span class="pill warn">WAIT</span> stabilizing`;
+        return;
+      }
+      el.innerHTML = `<span class="pill ok">TEST</span> press button`;
+    }
+
+    function drawChart(canvas, samples) {
+      if (!canvas || !samples || samples.length < 2) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const leftPad = 56;
+      const rightPad = 150;
+      const topPad = 22;
+      const bottomPad = 30;
+      const plotW = w - leftPad - rightPad;
+      const plotH = h - topPad - bottomPad;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#d9e1ea';
+      ctx.strokeRect(leftPad, topPad, plotW, plotH);
+      const maxT = Math.max(...samples.map(s=>s.t_s), 0.001);
+      const series = [
+        { key:'voltage_v', color:'#1565c0', name:'V', unit:'V' },
+        { key:'resistance_ohm', color:'#2e7d32', name:'R', unit:'mΩ', transform:v=>v*1000 }
+      ];
+
+      ctx.strokeStyle = '#edf2f7';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const gy = topPad + (i / 4) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(leftPad, gy);
+        ctx.lineTo(leftPad + plotW, gy);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= 5; i++) {
+        const gx = leftPad + (i / 5) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(gx, topPad);
+        ctx.lineTo(gx, topPad + plotH);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#60768d';
+      ctx.font = '11px Segoe UI';
+      ctx.fillText('Time (s)', leftPad + plotW / 2 - 18, h - 8);
+      ctx.fillText('0', leftPad - 6, h - 8);
+      ctx.fillText(maxT.toFixed(2), leftPad + plotW - 14, h - 8);
+
+      const summaries = [];
+      series.forEach((s) => {
+        const values = samples
+          .map(p => p[s.key])
+          .filter(v => v !== null && v !== undefined)
+          .map(v => (s.transform ? s.transform(v) : v));
+        if (values.length < 2) return;
+        const minV = Math.min(...values);
+        const maxV = Math.max(...values);
+        const span = Math.max(maxV - minV, 1e-9);
+        summaries.push({ ...s, minV, maxV });
+
+        ctx.beginPath();
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = s.color;
+        let started = false;
+        samples.forEach((p) => {
+          const raw = p[s.key];
+          if (raw === null || raw === undefined) return;
+          const value = s.transform ? s.transform(raw) : raw;
+          const x = leftPad + (p.t_s / maxT) * plotW;
+          const y = topPad + (1 - (value - minV) / span) * plotH;
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        if (started) ctx.stroke();
+      });
+
+      summaries.forEach((s, idx) => {
+        ctx.fillStyle = s.color;
+        ctx.font = '11px Segoe UI';
+        const y = topPad + 12 + idx * 18;
+        ctx.fillText(
+          `${s.name}: ${s.minV.toFixed(2)}-${s.maxV.toFixed(2)} ${s.unit}`,
+          leftPad + plotW + 8,
+          y,
+        );
+      });
+    }
+
+    async function toggleGraph(testId) {
+      const row=document.getElementById(`graph-row-${testId}`), canvas=document.getElementById(`graph-canvas-${testId}`);
+      if(!row||!canvas)return;
+      const open=row.style.display==='none'||row.style.display===''; row.style.display=open?'table-row':'none';
+      if(!open){expandedGraphs.delete(testId); return;} expandedGraphs.add(testId);
+      if(!sampleCache.has(testId)){ const res=await fetch(`/api/tests/${testId}/samples`); sampleCache.set(testId, await res.json()); }
+      drawChart(canvas, sampleCache.get(testId));
+    }
+
+    async function saveNote(testId) {
+      const input=document.getElementById(`note-${testId}`); if(!input)return;
+      const note=input.value.slice(0,120); if(inFlightNotes.get(testId)===note)return; inFlightNotes.set(testId,note);
+      await fetch(`/api/tests/${testId}/note`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({note}) });
+    }
+
+    function setSelected(testId, checked){ if(checked) selectedTests.add(testId); else selectedTests.delete(testId); }
+
+    async function restoreExpandedGraphs() {
+      for (const testId of expandedGraphs) {
+        const row=document.getElementById(`graph-row-${testId}`), canvas=document.getElementById(`graph-canvas-${testId}`);
+        if(!row||!canvas) continue; row.style.display='table-row';
+        if(!sampleCache.has(testId)){ const res=await fetch(`/api/tests/${testId}/samples`); sampleCache.set(testId, await res.json()); }
+        drawChart(canvas, sampleCache.get(testId));
+      }
+    }
+
+    async function refreshGroups() {
+      const groups = await (await fetch('/api/groups')).json();
+      groupMap.clear();
+      groups.forEach(g => groupMap.set(String(g.group.id), g.group));
+      const select = document.getElementById('groupSelect');
+      const prev = select.value;
+      select.innerHTML = groups.map(g => `<option value="${g.group.id}">${g.group.name}</option>`).join('');
+      if (prev) select.value = prev;
+      if (document.getElementById('viewGroupOnly')?.checked) {
+        await applyGroupFilter();
+      }
+      const rows = document.getElementById('groupRows');
+      rows.innerHTML = groups.map(g => `
+        <tr>
+          <td>${g.group.id}</td><td>${g.group.name}</td><td>${g.group.chemistry}</td>
+          <td>${g.group.capacity_ah}Ah / ${g.group.target_load_current_a}A / ${g.group.pulse_duration_s}s / ${g.group.test_temperature_c}C / rest ${g.group.rest_time_s}s</td>
+          <td>${g.test_count}</td>
+          <td><button onclick="deleteGroup(${g.group.id})">Delete</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function fetchTests(sortBy, sortOrder, limit) {
+      const sinceId = (sortBy === 'id' && sortOrder === 'desc' && rowCache.size > 0)
+        ? Math.max(...rowCache.keys())
+        : null;
+      if (sinceId === null) {
+        return await (await fetch(`/api/tests?limit=${limit}&sort_by=${encodeURIComponent(sortBy)}&order=${encodeURIComponent(sortOrder)}`)).json();
+      }
+      const delta = await (await fetch(`/api/tests?limit=${limit}&since_id=${sinceId}`)).json();
+      return delta;
+    }
+
+    function renderRow(t) {
+      const missingNote = !t.note || !t.note.trim();
+      return `
+        <tr data-test-id="${t.id}">
+          <td><input type="checkbox" ${selectedTests.has(t.id)?'checked':''} onchange="setSelected(${t.id}, this.checked)"></td>
+          <td>${t.id}</td><td>${new Date(t.started_at).toLocaleString()}</td><td>${t.duration_s.toFixed(2)}</td>
+          <td>${t.start_voltage_v.toFixed(3)}</td><td>${t.end_voltage_v.toFixed(3)}</td><td>${fmtDelta(t.delta_voltage_v,'V',3)}</td>
+          <td>${fmtResistance(t.start_resistance_ohm)}</td><td>${fmtResistance(t.min_resistance_ohm)}</td><td>${fmtResistance(t.max_resistance_ohm)}</td>
+          <td>${fmtDelta(t.delta_resistance_ohm,'mΩ',2,1000)}</td><td>${t.sample_count ?? '-'}</td>
+          <td>
+            <input id="note-${t.id}" class="note-input" maxlength="120" value="${escapeAttr(t.note||'')}" onblur="saveNote(${t.id})">
+            ${missingNote ? '<span class="badge-missing">Note required</span>' : ''}
+          </td>
+          <td><button onclick="toggleGraph(${t.id})">View</button></td>
+          <td><button title="Delete result" onclick="deleteResult(${t.id})">&#128465;</button></td>
+        </tr>
+        <tr id="graph-row-${t.id}" style="display:none;"><td colspan="15"><div class="chart-legend"><span class="chip v">V</span><span class="chip r">R</span></div><canvas id="graph-canvas-${t.id}" width="980" height="220" style="max-width:100%;"></canvas></td></tr>
+      `;
+    }
+
+    async function refresh() {
+      const sortBy=document.getElementById('sortBy').value, sortOrder=document.getElementById('sortOrder').value;
+      const [status, tests] = await Promise.all([
+        (await fetch('/api/status')).json(),
+        fetchTests(sortBy, sortOrder, 50)
+      ]);
+      document.getElementById('connected').innerHTML = status.connected?'<span class="pill ok">Connected</span>':'<span class="pill warn">Disconnected</span>';
+      document.getElementById('underLoad').innerHTML = status.under_load ? '<span class="pill info">Active</span>' : '<span class="pill warn">Idle</span>';
+      document.getElementById('count').textContent = status.total_tests;
+      document.getElementById('voltage').textContent = status.last_measurement ? `${status.last_measurement.voltage_v.toFixed(3)} V` : '-';
+      document.getElementById('resistance').textContent = status.last_measurement ? fmtResistance(status.last_measurement.resistance_ohm) : '-';
+      document.getElementById('packetRate').textContent = status.packet_rate_hz ? `${status.packet_rate_hz.toFixed(1)} Hz` : '-';
+      document.getElementById('bufferDepth').textContent = Number.isFinite(status.buffer_depth) ? String(status.buffer_depth) : '-';
+      maybeAutoStartRestTimer(status);
+      updateTestPhase(status);
+
+      const active=document.activeElement; const editing=active&&active.classList&&active.classList.contains('note-input');
+      if (!editing) {
+        const tbody=document.getElementById('rows');
+        if (sortBy === 'id' && sortOrder === 'desc' && rowCache.size > 0) {
+          tests.forEach(t => rowCache.set(t.id, t));
+          const sorted = Array.from(rowCache.values()).sort((a,b)=>b.id-a.id).slice(0, 50);
+          tbody.innerHTML = sorted.map(renderRow).join('');
+        } else if (rowCache.size === 0 || (sortBy === 'id' && sortOrder === 'desc')) {
+          tests.forEach(t => rowCache.set(t.id, t));
+          const sorted = Array.from(rowCache.values()).sort((a,b)=>b.id-a.id).slice(0, 50);
+          tbody.innerHTML = sorted.map(renderRow).join('');
+        } else {
+          rowCache.clear();
+          tests.forEach(t => rowCache.set(t.id, t));
+          tbody.innerHTML = tests.map(renderRow).join('');
+        }
+      }
+      await restoreExpandedGraphs();
+      await refreshGroups();
+      updateRestIndicator();
+    }
+
+    async function clearResults() {
+      if (!confirm('Clear all results and samples?')) return;
+      await fetch('/api/tests', { method:'DELETE' });
+      selectedTests.clear(); sampleCache.clear(); expandedGraphs.clear();
+      await refresh();
+    }
+
+    async function createGroup() {
+      const payload = {
+        name: document.getElementById('groupName').value.trim(),
+        chemistry: document.getElementById('groupChem').value.trim(),
+        module_nominal_v: Number(document.getElementById('groupNomV').value),
+        capacity_ah: Number(document.getElementById('groupCap').value),
+        sticker_energy_wh: document.getElementById('groupWh').value ? Number(document.getElementById('groupWh').value) : null,
+        test_temperature_c: Number(document.getElementById('groupTemp').value),
+        target_load_current_a: Number(document.getElementById('groupLoadA').value),
+        pulse_duration_s: Number(document.getElementById('groupPulseS').value),
+        rest_time_s: Number(document.getElementById('groupRestS').value),
+      };
+      if (!payload.name || !payload.chemistry || !payload.module_nominal_v || !payload.capacity_ah || !payload.target_load_current_a || !payload.pulse_duration_s || !payload.rest_time_s) return;
+      await fetch('/api/groups', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      await refreshGroups();
+    }
+
+    async function deleteGroup(groupId) { await fetch(`/api/groups/${groupId}`, { method:'DELETE' }); await refreshGroups(); }
+    async function clearGroups() { if(!confirm('Clear all groups?')) return; await fetch('/api/groups', { method:'DELETE' }); await refreshGroups(); document.getElementById('rankRows').innerHTML=''; }
+
+    async function addSelectedToGroup() {
+      const groupId = Number(document.getElementById('groupSelect').value);
+      if (!groupId || selectedTests.size === 0) return;
+      await fetch(`/api/groups/${groupId}/tests`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ test_ids: Array.from(selectedTests) }),
+      });
+      if (document.getElementById('viewGroupOnly')?.checked) {
+        await applyGroupFilter();
+      }
+      await refreshGroups();
+    }
+
+    async function deleteResult(testId) {
+      if (!confirm(`Delete result ${testId}?`)) return;
+      await fetch(`/api/tests/${testId}`, { method:'DELETE' });
+      selectedTests.delete(testId);
+      sampleCache.delete(testId);
+      expandedGraphs.delete(testId);
+      await refresh();
+    }
+
+    function startRestTimer() {
+      const groupId = document.getElementById('groupSelect').value;
+      let restS = Number(document.getElementById('groupRestS').value) || 30;
+      if (groupMap.has(groupId)) {
+        restS = Number(groupMap.get(groupId).rest_time_s) || restS;
+      }
+      restUntilMs = Date.now() + (restS * 1000);
+      updateRestIndicator();
+    }
+
+    async function rankGroup() {
+      const groupId = Number(document.getElementById('groupSelect').value);
+      if (!groupId) return;
+      const res = await fetch(`/api/groups/${groupId}/rank`);
+      const warnings = document.getElementById('rankWarnings');
+      if (!res.ok) {
+        const err = await res.json();
+        const detail = err.detail;
+        if (detail && detail.missing_note_test_ids) {
+          warnings.textContent = `${detail.message} ${detail.why} ${detail.action} Missing test IDs: ${detail.missing_note_test_ids.join(', ')}`;
+        } else {
+          warnings.textContent = `Ranking blocked: ${JSON.stringify(detail)}`;
+        }
+        document.getElementById('rankRows').innerHTML = '';
+        return;
+      }
+      const data = await res.json();
+      warnings.textContent = data.warnings && data.warnings.length ? data.warnings.join(' | ') : data.ranking_method;
+      document.getElementById('rankRows').innerHTML = data.ranked_results.map(r => `
+        <tr><td>${r.rank}</td><td>${r.test_id}</td><td>${r.score.toFixed(3)}</td><td>${r.voltage_drop_v.toFixed(3)} V</td><td>${fmtResistance(r.min_resistance_ohm)}</td><td>${escapeAttr(r.note)}</td></tr>
+      `).join('');
+    }
+
+    async function loop(){ try{ await refresh(); }catch(err){ console.error(err); }finally{ updateRestIndicator(); setTimeout(loop,1000);} }
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error(event.reason);
+    });
+    loop();
+  </script>
+</body>
+</html>
+    async function applyGroupFilter() {
+      const groupId = Number(document.getElementById('groupSelect').value);
+      if (!groupId) return;
+      const tests = await (await fetch(`/api/groups/${groupId}/tests?sort_by=id&order=desc`)).json();
+      rowCache.clear();
+      tests.forEach(t => rowCache.set(t.id, t));
+      document.getElementById('rows').innerHTML = tests.map(renderRow).join('');
+    }
+
+    async function toggleGroupView() {
+      const cb = document.getElementById('viewGroupOnly');
+      if (cb?.checked) {
+        await applyGroupFilter();
+      } else {
+        rowCache.clear();
+        await refresh();
+      }
+    }
